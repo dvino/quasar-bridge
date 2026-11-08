@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -56,6 +57,20 @@ type Client struct {
 	AccessToken func(context.Context) (string, error)
 }
 
+type modelSelectionKey struct{}
+type modelSelection struct{ model, effort string }
+
+// WithModelSelection changes a single request chain without mutating the shared client.
+func WithModelSelection(ctx context.Context, model, effort string) context.Context {
+	return context.WithValue(ctx, modelSelectionKey{}, modelSelection{model: model, effort: effort})
+}
+
+// WithDefaultModelSelection prevents an answer-specific choice from leaking
+// into auxiliary tasks such as memory extraction.
+func WithDefaultModelSelection(ctx context.Context) context.Context {
+	return context.WithValue(ctx, modelSelectionKey{}, struct{}{})
+}
+
 var serviceMarkup = regexp.MustCompile(`(?i)(?:</?[|｜]|<\s*/?\s*(?:[\w.-]+:)?(?:(?:tool_calls?|function_calls?|tool_responses?|tool_results?|think(?:ing)?|analysis|reasoning(?:_content)?)\b|(?:function|parameter|invoke)(?:\s*=|\s+|\s*>|$)))`)
 
 // ValidateAnswer rejects service markup rather than speaking unexecuted calls
@@ -94,6 +109,11 @@ func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool) (Me
 	return c.chat(ctx, messages, false, tools)
 }
 func (c *Client) chat(ctx context.Context, messages []Message, structured bool, tools []Tool) (Message, error) {
+	if selection, ok := ctx.Value(modelSelectionKey{}).(modelSelection); ok {
+		copy := *c
+		copy.Model, copy.ReasoningEffort = selection.model, selection.effort
+		c = &copy
+	}
 	if err := ValidateChatParameters(c.ChatParameters); err != nil {
 		return Message{}, err
 	}
@@ -170,7 +190,11 @@ func (c *Client) chatCompletions(ctx context.Context, messages []Message, struct
 }
 
 func (c *Client) post(ctx context.Context, path string, request any) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeout := 60 * time.Second
+	if c.API == "chatgpt" && slices.Contains(c.HostedTools, "web_search") {
+		timeout = 120 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	baseURL, apiKey := c.BaseURL, c.APIKey
 	if c.API == "chatgpt" {

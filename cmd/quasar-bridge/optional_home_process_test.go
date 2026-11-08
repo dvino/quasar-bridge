@@ -23,7 +23,7 @@ func TestHybridWithoutHomeProcess(t *testing.T) {
 		if action != "server" {
 			os.Args = append(os.Args, "-"+action)
 			if action == "route" {
-				os.Args = append(os.Args, "выключи свет")
+				os.Args = append(os.Args, "выключи свет в ванной")
 			} else if action == "query" {
 				os.Args = append(os.Args, "спроси нейросеть: привет")
 			}

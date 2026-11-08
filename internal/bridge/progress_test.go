@@ -17,13 +17,18 @@ import (
 	client "github.com/skrashevich/quasar-go-genproto/proto/alice/protos/api/alicekit/protocol/client"
 	server "github.com/skrashevich/quasar-go-genproto/proto/alice/protos/api/alicekit/protocol/server"
 	"google.golang.org/protobuf/encoding/protowire"
+	"quasarbridge/internal/llm"
 	"quasarbridge/internal/wire"
 )
 
-type delayedRoute struct{ release <-chan struct{} }
+type delayedRoute struct {
+	release <-chan struct{}
+	source  string
+	ack     string
+}
 
 func (d delayedRoute) Decide(context.Context, string) RouteDecision {
-	return RouteDecision{Route: "llm"}
+	return RouteDecision{Route: "llm", Source: d.source, classification: dialogueClassification{Ack: d.ack}}
 }
 func (d delayedRoute) Resolve(ctx context.Context, s string) (Resolution, error) {
 	return d.ResolveDecision(ctx, s, d.Decide(ctx, s))
@@ -33,20 +38,29 @@ func (d delayedRoute) ResolveDecision(ctx context.Context, s string, r RouteDeci
 	case <-ctx.Done():
 		return Resolution{}, ctx.Err()
 	case <-d.release:
-		return Resolution{Route: "llm", Answer: "Готовый ответ"}, nil
+		answer := "Готовый ответ"
+		if d.ack != "" {
+			answer = "С удовольствием! " + answer
+		}
+		return Resolution{Route: "llm", Answer: answer}, nil
 	}
 }
 func TestSlowLocalRequestUsesDeferredResponses(t *testing.T) {
 	for _, finalStream := range []uint32{72, 88} {
 		for _, omitID := range []bool{false, true} {
 			for _, voice := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%d/omit_id=%v/voice=%v", finalStream, omitID, voice), func(t *testing.T) { testSlowLocalRequest(t, finalStream, omitID, voice, true) })
+				t.Run(fmt.Sprintf("%d/omit_id=%v/voice=%v", finalStream, omitID, voice), func(t *testing.T) { testSlowLocalRequest(t, finalStream, omitID, voice, true, "", false, "") })
 			}
 		}
 	}
-	t.Run("listening_disabled", func(t *testing.T) { testSlowLocalRequest(t, 72, false, true, false) })
+	t.Run("listening_disabled", func(t *testing.T) { testSlowLocalRequest(t, 72, false, true, false, "", false, "") })
+	t.Run("dialogue_initial_listen", func(t *testing.T) { testSlowLocalRequest(t, 72, false, true, true, "dialogue_session", true, "") })
+	t.Run("companion_initial_listen", func(t *testing.T) { testSlowLocalRequest(t, 72, false, true, true, "companion_session", true, "") })
+	t.Run("spoken_ack", func(t *testing.T) {
+		testSlowLocalRequest(t, 72, false, true, true, "dialogue_session", true, "Давай!")
+	})
 }
-func testSlowLocalRequest(t *testing.T, finalStream uint32, omitID, voice, shouldListen bool) {
+func testSlowLocalRequest(t *testing.T, finalStream uint32, omitID, voice, shouldListen bool, source string, initialListen bool, ack string) {
 	release := make(chan struct{})
 	down := make(chan wire.Frame, 20)
 	up := make(chan wire.Frame, 20)
@@ -56,7 +70,7 @@ func testSlowLocalRequest(t *testing.T, finalStream uint32, omitID, voice, shoul
 	}, func(ctx context.Context, k websocket.MessageType, b []byte) error {
 		down <- wire.Decode(b, wire.ServerToClient)
 		return nil
-	}, delayedRoute{release})
+	}, delayedRoute{release: release, source: source, ack: ack})
 	defer n.Close()
 	n.ShouldListen = shouldListen
 	n.ProgressAfter = 5 * time.Millisecond
@@ -87,11 +101,11 @@ func testSlowLocalRequest(t *testing.T, finalStream uint32, omitID, voice, shoul
 	if initial.Kind() != "AliceResponse" || !initial.Server.GetEvent().GetAliceResponse().GetResponse().GetIsStreaming() {
 		t.Fatal("missing initial streaming response")
 	}
-	if initial.Server.GetEvent().GetAliceResponse().GetVoiceResponse().GetShouldListen() {
-		t.Fatal("initial streaming response reopened listening")
+	if got := initial.Server.GetEvent().GetAliceResponse().GetVoiceResponse().GetShouldListen(); got != initialListen {
+		t.Fatalf("initial streaming response listen=%v want %v", got, initialListen)
 	}
 	part := next().Server.GetEvent().GetDeferredAliceResponse()
-	if part == nil || part.GetIsLast() || part.GetRequestId() != "application-request" || part.GetBaseResponse().GetText() != "" {
+	if part == nil || part.GetIsLast() || part.GetRequestId() != "application-request" || part.GetBaseResponse().GetText() != ack {
 		t.Fatal("invalid keepalive")
 	}
 	if part.GetBaseResponse().GetShouldListen() {
@@ -115,19 +129,23 @@ func testSlowLocalRequest(t *testing.T, finalStream uint32, omitID, voice, shoul
 	if voice && !canceledCloud {
 		t.Fatal("voice request was not canceled in cloud")
 	}
-	if firstTTS.Kind() != "TtsGenerate" || firstTTS.Client.GetEvent().GetTtsGenerate().GetText() == "Сейчас проверю." {
-		t.Fatal("spoken filler was synthesized")
+	if firstTTS.Kind() != "TtsGenerate" || (ack != "" && firstTTS.Client.GetEvent().GetTtsGenerate().GetText() != ack) || (ack == "" && firstTTS.Client.GetEvent().GetTtsGenerate().GetText() != "а") {
+		t.Fatal("unexpected initial synthesis")
 	}
 	setupSpeech := []byte{0xf8, 0x12, 0x34, 0x56}
 	feedSpeech(t, n, firstTTS.Client.GetEvent().GetHeader().GetMessageId(), 72, omitID, setupSpeech)
+	gotSpeech := false
 	for len(down) > 0 {
 		initial := <-down
 		if initial.Kind() == "opaque" && bytes.Contains(initial.Raw, setupSpeech) {
-			t.Fatal("setup speech was forwarded to speaker")
+			gotSpeech = true
 		}
 		if initial.Kind() == "StreamControl" {
 			t.Fatal("initial audio closed")
 		}
+	}
+	if gotSpeech != (ack != "") {
+		t.Fatalf("initial speech forwarded=%v, ack=%q", gotSpeech, ack)
 	}
 	close(release)
 	for {
@@ -212,13 +230,63 @@ func feedSpeech(t *testing.T, n *Native, id string, streamID uint32, omitID bool
 	}
 }
 
+func TestProgressPreservesAudienceDialogueTicket(t *testing.T) {
+	t.Setenv("QUASAR_AGE_ROUTING", "1")
+	release := make(chan struct{})
+	up := make(chan wire.Frame, 20)
+	down := make(chan wire.Frame, 100)
+	engine := &Engine{LLM: completionFunc(func(ctx context.Context, _ []llm.Message, _ bool) (string, error) {
+		select {
+		case <-release:
+			return "Готовый ответ", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})}
+	n := NewNative(t.Context(), func(_ context.Context, _ websocket.MessageType, b []byte) error {
+		up <- wire.Decode(b, wire.ClientToServer)
+		return nil
+	}, func(_ context.Context, _ websocket.MessageType, b []byte) error {
+		down <- wire.Decode(b, wire.ServerToClient)
+		return nil
+	}, engine)
+	defer n.Close()
+	n.ProgressAfter = time.Millisecond
+	n.ProgressInterval = time.Second
+	input := &client.TClientMessage{Message: &client.TClientMessage_Event{Event: &client.TClientMessage_TEvent{Header: &header.TEventHeader{MessageId: "audience-test"}, Event: &client.TClientMessage_TEvent_TextInput{TextInput: &request.TAliceRequestProto{Request: &request.TAliceRequestProto_TRequest{Event: &common.TEvent{Text: new("спроси нейросеть сколько будет два плюс два")}}}}}}}
+	if err := n.Client(t.Context(), websocket.MessageBinary, aa(input)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case f := <-up:
+		if f.Kind() != "TtsGenerate" {
+			t.Fatalf("first upstream frame: %s", f.Kind())
+		}
+		feedSpeech(t, n, f.Client.GetEvent().GetHeader().GetMessageId(), 72, false)
+	case <-time.After(time.Second):
+		t.Fatal("missing progress TTS")
+	}
+	close(release)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case f := <-up:
+			if f.Kind() == "TtsGenerate" && f.Client.GetEvent().GetTtsGenerate().GetText() == "Готовый ответ" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("progress invalidated the pending dialogue request")
+		}
+	}
+}
+
 func TestProgressCancellationStopsWithoutFinalAnswer(t *testing.T) {
 	release := make(chan struct{})
 	down := make(chan wire.Frame, 20)
 	n := NewNative(t.Context(), func(context.Context, websocket.MessageType, []byte) error { return nil }, func(_ context.Context, _ websocket.MessageType, b []byte) error {
 		down <- wire.Decode(b, wire.ServerToClient)
 		return nil
-	}, delayedRoute{release})
+	}, delayedRoute{release: release})
 	n.ProgressAfter = time.Millisecond
 	n.ProgressInterval = time.Millisecond
 	input := &client.TClientMessage{Message: &client.TClientMessage_Event{Event: &client.TClientMessage_TEvent{Header: &header.TEventHeader{MessageId: "cancel-test"}, Event: &client.TClientMessage_TEvent_TextInput{TextInput: &request.TAliceRequestProto{Request: &request.TAliceRequestProto_TRequest{Event: &common.TEvent{Text: new("история")}}}}}}}

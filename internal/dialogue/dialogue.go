@@ -33,6 +33,7 @@ func (c Config) Validate() error {
 }
 
 type speakerKey struct{}
+type familyKey struct{}
 
 // WithSpeaker scopes context without retaining the raw device identifier.
 func WithSpeaker(ctx context.Context, id string) context.Context {
@@ -42,6 +43,22 @@ func key(ctx context.Context) string { s, _ := ctx.Value(speakerKey{}).(string);
 
 // SpeakerKey returns the anonymous key shared by this speaker's requests.
 func SpeakerKey(ctx context.Context) string { return key(ctx) }
+
+// FamilyKey identifies the device scope before audience routing. It is not a
+// person identifier and must never grant access to an adult dialogue history.
+func FamilyKey(ctx context.Context) string {
+	if s, ok := ctx.Value(familyKey{}).(string); ok {
+		return s
+	}
+	return key(ctx)
+}
+
+// Audience changes must not reuse a ticket or history from another audience.
+func WithAudience(ctx context.Context, audience string) context.Context {
+	ctx = context.WithValue(ctx, familyKey{}, FamilyKey(ctx))
+	ctx = WithSpeaker(ctx, key(ctx)+":audience:"+audience)
+	return context.WithValue(ctx, requestKey{}, requestState{})
+}
 
 type turn struct {
 	user, answer string

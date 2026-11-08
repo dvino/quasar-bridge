@@ -43,11 +43,16 @@ type RefusalConfig struct {
 	ContainsAny []string `json:"contains_any"`
 }
 type RouteDecision struct {
-	ticket   dialogue.Ticket
-	prepared bool
-	Route    string `json:"route"`
-	Rule     string `json:"rule,omitempty"`
-	Source   string `json:"source"`
+	ticket         dialogue.Ticket
+	prepared       bool
+	keepDialogue   bool
+	classification dialogueClassification
+	gameHistory    dialogue.Snapshot
+	seedGame       bool
+	privateGame    bool
+	Route          string `json:"route"`
+	Rule           string `json:"rule,omitempty"`
+	Source         string `json:"source"`
 }
 type compiledRule struct {
 	name, route       string

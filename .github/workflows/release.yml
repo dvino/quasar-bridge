@@ -2,7 +2,7 @@ name: standalone release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*-fork.*']
   # A manual run checks/builds the selected ref without publishing a release.
   workflow_dispatch:
 

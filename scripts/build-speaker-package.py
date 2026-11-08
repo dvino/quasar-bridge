@@ -26,8 +26,8 @@ def check_elf(path, arch):
 
 def build(arch="arm64", output=None, binary=None, tag=None, upx=False,
           pcm_armv7_binary=None, pcm_arm64_binary=None):
-    if tag is not None and not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag):
-        raise ValueError("release tag must be vMAJOR.MINOR.PATCH")
+    if tag is not None and not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-fork\.[1-9][0-9]*)?", tag):
+        raise ValueError("release tag must be vMAJOR.MINOR.PATCH[-fork.N]")
     version = tag[1:] if tag else "dev"
     output = Path(output or ROOT / f"dist/quasar-bridge-linux-{arch}.tar.gz").resolve()
     with tempfile.TemporaryDirectory(prefix="quasar-speaker-") as tmp:

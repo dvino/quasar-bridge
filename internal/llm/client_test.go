@@ -59,6 +59,31 @@ func TestCompleteHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestHostedSearchDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		api   string
+		tools []string
+		want  time.Duration
+	}{
+		{"chatgpt search", "chatgpt", []string{"web_search"}, 120 * time.Second},
+		{"chatgpt without search", "chatgpt", nil, 60 * time.Second},
+		{"responses search", "responses", []string{"web_search"}, 60 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Client{API: tc.api, HostedTools: tc.tools, BaseURL: "https://api.openai.com/v1", AccessToken: func(context.Context) (string, error) { return "fixture", nil }, HTTP: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				deadline, ok := r.Context().Deadline()
+				remaining := time.Until(deadline)
+				if !ok || remaining > tc.want || remaining < tc.want-time.Second {
+					t.Errorf("deadline remaining %v, want about %v", remaining, tc.want)
+				}
+				return nil, errors.New("fixture")
+			})}}
+			_, _ = c.post(context.Background(), "/responses", map[string]any{})
+		})
+	}
+}
+
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

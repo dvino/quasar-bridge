@@ -1,7 +1,7 @@
 Quasar Bridge includes the LGPL-3.0 go-aac decoder through station-airplay.
 The corresponding-source archive quasar-bridge-source.tar.gz is distributed
 beside each standalone binary release at:
-https://github.com/skrashevich/quasar-bridge/releases
+https://github.com/dvino/quasar-bridge/releases
 
 It includes Quasar Bridge source, the linked dependencies in vendor/, license
 texts and REBUILD.md with commands to modify and relink the executable for

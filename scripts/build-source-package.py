@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def build(output=None, tag=None):
-    if tag is not None and not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", tag):
-        raise ValueError("release tag must be vMAJOR.MINOR.PATCH")
+    if tag is not None and not re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-fork\.[1-9][0-9]*)?", tag):
+        raise ValueError("release tag must be vMAJOR.MINOR.PATCH[-fork.N]")
     version = tag[1:] if tag else "dev"
     output = Path(output or ROOT / "dist/quasar-bridge-source.tar.gz").resolve()
     with tempfile.TemporaryDirectory(prefix="quasar-source-") as tmp:

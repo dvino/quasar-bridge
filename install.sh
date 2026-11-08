@@ -2,7 +2,7 @@
 # Run on a computer with an SSH target, or directly on an HTTPS-capable speaker.
 set -eu
 umask 077
-release=${QUASAR_RELEASE_URL:-https://github.com/skrashevich/quasar-bridge/releases/latest/download}
+release=${QUASAR_RELEASE_URL:-https://github.com/dvino/quasar-bridge/releases/latest/download}
 cyan= green= red= reset=
 setup_color=0
 if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then

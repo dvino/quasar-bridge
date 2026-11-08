@@ -103,10 +103,14 @@ func (n *Native) beginDeferred(p *nativeRequest) error {
 	if err := n.down(p.ctx, websocket.MessageBinary, b); err != nil {
 		return err
 	}
-	if err := n.deferredPart(p, "", false); err != nil {
+	if err := n.deferredPart(p, p.progressSpeech, false); err != nil {
 		return err
 	}
-	// Obtain the provider's actual Opus headers; its speech payload is discarded.
+	// With no acknowledgement, obtain real Opus headers and discard the dummy
+	// speech. Otherwise the progress segment carries the approved short phrase.
+	if p.progressSpeech != "" {
+		return n.synthesize(p, p.progressSpeech)
+	}
 	return n.synthesize(p, "а")
 }
 func (n *Native) deferredPart(p *nativeRequest, text string, last bool) error {
@@ -116,6 +120,9 @@ func (n *Native) deferredPart(p *nativeRequest, text string, last bool) error {
 	p.partial++
 	base := &deferred.TDeferedAliceResponseProto_TBaseResponse{}
 	voice := text
+	if voice != "" {
+		voice = speechText(voice)
+	}
 	if last {
 		silentPlayback := n.hasSilentPlayback(p)
 		base.ShouldListen = n.ShouldListen && !silentPlayback && reply.ListeningAllowed(p.ctx)

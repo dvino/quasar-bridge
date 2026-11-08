@@ -25,6 +25,7 @@ import (
 // Version is set by the release build; unversioned binaries remain development builds.
 var Version = "dev"
 
+const CustomBuildUpdateReason = "official automatic update is disabled for this customized build; merge and test changes before installing"
 const repository = "https://github.com/skrashevich/quasar-bridge"
 const latestURL = "https://api.github.com/repos/skrashevich/quasar-bridge/releases/latest"
 const maxArchive = 32 << 20
@@ -49,6 +50,7 @@ type InstallResult struct {
 }
 
 type Updater struct {
+	customBuild    bool
 	currentVersion string
 	executable     string
 	configPath     string
@@ -59,7 +61,7 @@ func New(configPath string) *Updater {
 	executable, _ := os.Executable()
 	executable, _ = filepath.EvalSymlinks(executable)
 	configPath, _ = filepath.Abs(configPath)
-	u := &Updater{currentVersion: Version, executable: executable, configPath: configPath, client: &http.Client{
+	u := &Updater{customBuild: true, currentVersion: Version, executable: executable, configPath: configPath, client: &http.Client{
 		Timeout: 40 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 || req.URL.Scheme != "https" || req.URL.User != nil {
@@ -151,6 +153,9 @@ func (u *Updater) latestReleaseTag(ctx context.Context) (string, error) {
 }
 
 func (u *Updater) installState() (string, error) {
+	if u.customBuild {
+		return "", errors.New(CustomBuildUpdateReason)
+	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" && runtime.GOARCH != "arm" || os.Geteuid() != 0 {
 		return "", errors.New("automatic installation requires a standalone Linux ARM64/ARMv7 speaker running as root")
 	}

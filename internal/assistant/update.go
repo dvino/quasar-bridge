@@ -15,6 +15,9 @@ func updateCheckReply(result string) string {
 	if json.Unmarshal([]byte(result), &status) != nil || status.LatestVersion == "" {
 		return "Не удалось проверить обновления. Попробуйте ещё раз позже."
 	}
+	if status.InstallUnavailableReason == update.CustomBuildUpdateReason {
+		return fmt.Sprintf("Последняя официальная версия — %s. Автоматическая установка отключена, чтобы сохранить наши доработки; обновление нужно сначала объединить и проверить.", status.LatestVersion)
+	}
 	if !status.CurrentVersionKnown {
 		return fmt.Sprintf("Последняя стабильная версия — %s. На колонке сборка разработки, поэтому сравнить версии автоматически нельзя.", status.LatestVersion)
 	}

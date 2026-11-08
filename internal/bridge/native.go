@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,8 @@ type FallbackResolver interface {
 }
 
 type nativeRequest struct {
+	age                             voiceAge
+	adultMale                       bool
 	streaming                       bool
 	listenOnStreamStart             bool
 	partial                         uint32
@@ -71,6 +74,7 @@ type nativeRequest struct {
 	ttsID                           string
 	progressTTS                     string
 	markedTTS                       bool // <speaker> can produce chained Opus streams.
+	progressSpeech                  string
 	audio                           oggSpeech
 	audioIsProgress                 bool
 	audioStarted                    bool
@@ -123,6 +127,13 @@ func (n *Native) Client(ctx context.Context, k websocket.MessageType, data []byt
 		return n.up(ctx, k, data)
 	}
 	e := f.Client.GetEvent()
+	n.traceVoiceClass(f.Kind(), e.GetVoiceInput())
+	n.traceVoiceClass(f.Kind(), e.GetMatchedUser())
+	if matched := e.GetMatchedUser(); matched != nil {
+		n.mu.Lock()
+		n.updateVoiceAge(matched.GetVoiceInputMessageId(), matched.GetRequest().GetEvent().GetBiometryClassification())
+		n.mu.Unlock()
+	}
 	if stat := e.GetRequestStat(); stat != nil {
 		kind := "none"
 		raw := strings.ToLower(stat.GetError())
@@ -161,7 +172,11 @@ func (n *Native) Client(ctx context.Context, k websocket.MessageType, data []byt
 		} else if id := req.GetApplication().GetUuid(); id != "" {
 			scope = "uuid:" + id
 		}
-		pctx, cancel := context.WithTimeout(dialogue.WithSpeaker(n.ctx, scope), 90*time.Second)
+		requestLifetime := 90 * time.Second
+		if n.ProgressAfter > 0 {
+			requestLifetime = 180 * time.Second
+		}
+		pctx, cancel := context.WithTimeout(dialogue.WithSpeaker(n.ctx, scope), requestLifetime)
 		pctx = reply.WithPolicy(pctx)
 		playerState := nativePlaybackState(req)
 		pctx = sound.WithPlaybackState(pctx, playerState)
@@ -192,7 +207,7 @@ func (n *Native) Client(ctx context.Context, k websocket.MessageType, data []byt
 		}); ok {
 			p.ctx = preparer.Prepare(p.ctx)
 		}
-		p.expires = time.AfterFunc(90*time.Second, func() {
+		p.expires = time.AfterFunc(requestLifetime, func() {
 			n.mu.Lock()
 			defer n.mu.Unlock()
 			p.canceled = true
@@ -418,7 +433,7 @@ func (n *Native) Server(ctx context.Context, k websocket.MessageType, data []byt
 				}
 				p.audioIsProgress = p.ttsID == p.progressTTS
 				p.audio.next()
-				p.audio.source.discardAudio = p.audioIsProgress
+				p.audio.source.discardAudio = p.audioIsProgress && p.progressSpeech == ""
 				if p.audioStarted {
 					p.audioWaiting = false
 					n.mu.Unlock()
@@ -543,6 +558,19 @@ func (n *Native) maybeResolve(p *nativeRequest) {
 		return
 	}
 	p.started = true
+	if os.Getenv("QUASAR_AGE_ROUTING") == "1" {
+		mode := p.age
+		if mode == "" {
+			mode = ageUnknown
+		}
+		p.ctx = dialogue.WithAudience(p.ctx, voiceAudience(mode, p.adultMale))
+		p.ctx = context.WithValue(p.ctx, voiceAgeKey{}, ageContext{mode: mode, adultMale: p.adultMale})
+		if preparer, ok := n.resolver.(interface {
+			Prepare(context.Context) context.Context
+		}); ok {
+			p.ctx = preparer.Prepare(p.ctx)
+		}
+	}
 	text := p.text
 	n.mu.Unlock()
 	n.wg.Go(func() {
@@ -559,7 +587,8 @@ func (n *Native) maybeResolve(p *nativeRequest) {
 			if routed, ok := n.resolver.(RoutedResolver); ok {
 				decision := routed.Decide(p.ctx, text)
 				n.mu.Lock()
-				p.listenOnStreamStart = decision.Source == "dialogue_retry"
+				p.listenOnStreamStart = decision.keepDialogue || decision.Source == "dialogue_session" || decision.Source == "companion_session" || decision.Source == "dialogue_retry"
+				p.progressSpeech = decision.classification.Ack
 				n.mu.Unlock()
 				slog.Info("native_route_decision", "request", requestTag(p.id), "route", decision.Route, "source", decision.Source)
 				stop := func() {}
@@ -632,6 +661,9 @@ func (n *Native) maybeResolve(p *nativeRequest) {
 		}
 		n.mu.Unlock()
 		slog.Info("native_route", "request", requestTag(p.id), "route", result.Route)
+		if p.streaming && p.progressSpeech != "" {
+			result.Answer = removeRepeatedAcknowledgement(result.Answer, p.progressSpeech)
+		}
 		if p.gated && !p.streaming {
 			if err := n.sendCancel(p.ctx, p.id); err != nil {
 				return
@@ -650,6 +682,25 @@ func (n *Native) sendCancel(ctx context.Context, id string) error {
 	}
 	return n.up(ctx, websocket.MessageBinary, b)
 }
+
+// If an acknowledgement was sent, remove only a separate, redundant opening
+// acknowledgement. Keep a sole acknowledgement and all substantive text.
+func removeRepeatedAcknowledgement(answer, ack string) string {
+	answer = strings.TrimSpace(answer)
+	if !safeDialogueAck(ack) {
+		return answer
+	}
+	for _, opening := range []string{"Давай!", "С удовольствием!", "Хорошо!", "Конечно!"} {
+		if len(answer) < len(opening) || !strings.EqualFold(answer[:len(opening)], opening) {
+			continue
+		}
+		if rest := strings.TrimSpace(answer[len(opening):]); rest != "" {
+			return rest
+		}
+	}
+	return answer
+}
+
 func (n *Native) reply(p *nativeRequest, result Resolution) error {
 	text := result.Answer
 	speech := cmp.Or(result.speech, text)
@@ -660,7 +711,7 @@ func (n *Native) reply(p *nativeRequest, result Resolution) error {
 	if requestID == "" {
 		requestID = p.id
 	}
-	answer := &response.TAliceResponseProto{Header: &response.TAliceResponseProto_THeader{RequestId: new(requestID), ResponseId: new(newID()), DialogId: new(p.request.GetHeader().GetDialogId()), SequenceNumber: new(p.request.GetHeader().GetSequenceNumber())}, VoiceResponse: &response.TAliceResponseProto_TVoiceResponse{OutputSpeech: &response.TAliceResponseProto_TVoiceResponse_TOutputSpeech{Text: new(text)}, HasVoiceResponse: true}, Response: &response.TAliceResponseProto_TResponse{Cards: []*response.TAliceResponseProto_TResponse_TCard{{Type: "simple_text", Text: new(text), CardId: new(newID())}}}}
+	answer := &response.TAliceResponseProto{Header: &response.TAliceResponseProto_THeader{RequestId: new(requestID), ResponseId: new(newID()), DialogId: new(p.request.GetHeader().GetDialogId()), SequenceNumber: new(p.request.GetHeader().GetSequenceNumber())}, VoiceResponse: &response.TAliceResponseProto_TVoiceResponse{OutputSpeech: &response.TAliceResponseProto_TVoiceResponse_TOutputSpeech{Text: new(speechText(text))}, HasVoiceResponse: true}, Response: &response.TAliceResponseProto_TResponse{Cards: []*response.TAliceResponseProto_TResponse_TCard{{Type: "simple_text", Text: new(text), CardId: new(newID())}}}}
 	silentPlayback := n.hasSilentPlayback(p)
 	answer.VoiceResponse.ShouldListen = n.ShouldListen && !silentPlayback && reply.ListeningAllowed(p.ctx)
 	if silentPlayback {
@@ -688,6 +739,7 @@ func (n *Native) reply(p *nativeRequest, result Resolution) error {
 	return n.synthesize(p, speech)
 }
 func (n *Native) synthesize(p *nativeRequest, text string) error {
+	text = speechText(text)
 	if strings.Contains(text, "<speaker") {
 		n.mu.Lock()
 		p.markedTTS = true

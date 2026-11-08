@@ -27,6 +27,14 @@ func isRetryCommand(text string) bool {
 // RecordDelivered retains text only, never tool results, audio or device IDs.
 // Native invokes it after its actual sender succeeds, outside the native mutex.
 func (e *Engine) RecordDelivered(ctx context.Context, question, answer string, final, action bool) {
+	if e.ExplicitConversations && final {
+		e.conversationModes.delivered(ctx)
+	}
+	// Companion has its own repeat buffer; never put family game turns into an
+	// adult replay history when an age classification changes mid-session.
+	if e.Companion != nil && e.Companion.Active(dialogue.FamilyKey(ctx)) {
+		return
+	}
 	ctx, view, ticket := e.dialogue().Start(ctx)
 	if dialogue.IsReset(question) {
 		action = true

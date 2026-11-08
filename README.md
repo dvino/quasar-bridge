@@ -4,6 +4,11 @@
 
 # Quasar Bridge
 
+> **Форк с модулем собеседника, кандидат для испытаний.**
+> [Отличия, настройки, ограничения и обновления](docs/fork.md).
+> Основной проект: [skrashevich/quasar-bridge](https://github.com/skrashevich/quasar-bridge).
+> Официальный автообновлятор в этой сборке отключён, чтобы не потерять дополнения.
+
 Quasar Bridge учит Яндекс Станцию отвечать с помощью вашей собственной
 нейросети и управлять умным домом через Home Assistant.
 
@@ -86,7 +91,7 @@ Quasar Bridge учит Яндекс Станцию отвечать с помо�
 **На компьютере** выполните команду, подставив адрес колонки вместо `SPEAKER_IP`:
 
 ```sh
-curl -fsSL -o /tmp/install-quasar-bridge.sh https://github.com/skrashevich/quasar-bridge/releases/latest/download/install.sh && sh /tmp/install-quasar-bridge.sh root@SPEAKER_IP -p 2222
+curl -fsSL -o /tmp/install-quasar-bridge.sh https://github.com/dvino/quasar-bridge/releases/latest/download/install.sh && sh /tmp/install-quasar-bridge.sh root@SPEAKER_IP -p 2222
 ```
 
 Если SSH на колонке слушает другой порт, замените `2222`.
@@ -283,7 +288,7 @@ sh "$pkg/control.sh" check-backends  # доступны ли нейросеть 
 `sh "$pkg/control.sh" restart`.
 
 Не получается разобраться — создайте
-[issue](https://github.com/skrashevich/quasar-bridge/issues). Укажите модель
+[issue форка](https://github.com/dvino/quasar-bridge/issues). Укажите модель
 колонки, версию программы (файл `/data/opt/quasar-bridge/app/VERSION`), на каком шаге возникла проблема и текст ошибки.
 Ключи API и секретные ссылки из `runtime.env` не публикуйте.
 
