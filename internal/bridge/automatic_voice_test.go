@@ -21,7 +21,7 @@ func TestAutomaticVoiceRespectsAudienceAndDisabledMarkup(t *testing.T) {
 			e := &Engine{TTSMarkup: tc.enabled}
 			ctx := context.WithValue(t.Context(), voiceAgeKey{}, tc.age)
 			instructions := e.ttsInstructions(ctx)
-			if strings.Contains(instructions, "постоянный голос — zahar") != tc.male {
+			if strings.Contains(instructions, "постоянный голос — kostya") != tc.male {
 				t.Fatal("incorrect default voice")
 			}
 			if strings.Contains(instructions, "Автоматически передавай уместные эмоции") != tc.enabled {
@@ -32,7 +32,7 @@ func TestAutomaticVoiceRespectsAudienceAndDisabledMarkup(t *testing.T) {
 			if r.Answer != "Готов." {
 				t.Fatal("markup in displayed answer")
 			}
-			if strings.Contains(r.speech, `voice="zahar"`) != tc.male {
+			if strings.Contains(r.speech, `voice="kostya"`) != tc.male {
 				t.Fatalf("speech=%q", r.speech)
 			}
 			const explicit = `<speaker voice="jane">Готова.`

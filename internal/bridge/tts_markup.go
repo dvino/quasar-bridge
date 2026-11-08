@@ -18,14 +18,14 @@ func (e *Engine) ttsInstructions(ctx context.Context) string {
 	}
 	instructions := tts.Instructions
 	if e.ownerVoice(ctx) {
-		return instructions + ` Для этого взрослого собеседника твой постоянный голос — zahar, мужской. Начинай speech или текст ответа с <speaker voice="zahar"> и говори о себе в мужском роде («понял», «готов»), кроме явно запрошенного другого голоса или реплики персонажа. После реплик персонажей возвращайся к zahar.`
+		return instructions + ` Для этого взрослого собеседника твой постоянный голос — kostya, мужской. Начинай speech или текст ответа с <speaker voice="kostya"> и говори о себе в мужском роде («понял», «готов»), кроме явно запрошенного другого голоса или реплики персонажа. После реплик персонажей возвращайся к kostya.`
 	}
 	return instructions + " По умолчанию говори о себе в женском роде; при смене голоса согласуй род с голосом."
 }
 
 func (e *Engine) setSpokenAnswer(ctx context.Context, r *Resolution, text string) {
 	if e.ownerVoice(ctx) && text != "" && !strings.Contains(text, "voice=") {
-		text = `<speaker voice="zahar">` + text
+		text = `<speaker voice="kostya">` + text
 	}
 	r.setModelAnswer(text, e.TTSMarkup)
 }
