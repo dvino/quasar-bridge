@@ -99,6 +99,7 @@ type Native struct {
 	blocked          map[uint32]*nativeRequest
 	wg               sync.WaitGroup
 	OnRoute          func(id, route string)
+	OnTTS            func(id, text string)
 	GateText         bool
 	ShouldListen     bool
 	DecisionDelay    time.Duration
@@ -750,7 +751,11 @@ func (n *Native) synthesize(p *nativeRequest, text string) error {
 	if err != nil {
 		return err
 	}
-	return n.up(p.ctx, websocket.MessageBinary, b)
+	err = n.up(p.ctx, websocket.MessageBinary, b)
+	if err == nil && n.OnTTS != nil {
+		n.OnTTS(p.id, text)
+	}
+	return err
 }
 func requestTag(id string) string {
 	sum := sha256.Sum256([]byte(id))

@@ -65,6 +65,8 @@ func TestLocalTTSMarkupStaysInSynthesis(t *testing.T) {
 				}
 			})}
 			n, up, down := soundSession(t, engine)
+			logged := make(chan string, 4)
+			n.OnTTS = func(id, text string) { logged <- text }
 			if name == "deferred" {
 				n.ProgressAfter = time.Millisecond
 			} else {
@@ -89,6 +91,12 @@ func TestLocalTTSMarkupStaysInSynthesis(t *testing.T) {
 			secondPacket := []byte{0xf8, 0x65, 0x43, 0x21}
 			feedSpeech(t, n, final.GetHeader().GetMessageId(), 88, true, firstPacket, secondPacket)
 			checkMarkedReply(t, down, plain, firstPacket, secondPacket)
+			if name == "deferred" {
+				<-logged
+			}
+			if got := <-logged; got != speech {
+				t.Fatalf("logged TTS = %q", got)
+			}
 			messages := engine.dialogue().View(<-modelContext).Messages
 			if len(messages) != 2 || messages[1].Content != plain {
 				t.Fatalf("dialogue history = %+v, want the plain answer", messages)

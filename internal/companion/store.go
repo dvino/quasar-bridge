@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"quasarbridge/internal/llm"
+	"quasarbridge/internal/tts"
 )
 
 type Completer interface {
@@ -140,6 +141,10 @@ func (s *Store) AnswerWithAdultProfile(ctx context.Context, client Completer, ke
 
 // AnswerWithHistory imports scoped recent turns only when starting a new session.
 func (s *Store) AnswerWithHistory(ctx context.Context, client Completer, key, input, source string, adult *Profile, initial []llm.Message) (string, error) {
+	return s.AnswerWithMarkup(ctx, client, key, input, source, adult, initial, "")
+}
+
+func (s *Store) AnswerWithMarkup(ctx context.Context, client Completer, key, input, source string, adult *Profile, initial []llm.Message, markupInstructions string) (string, error) {
 	if client == nil || key == "" || strings.TrimSpace(input) == "" || !utf8.ValidString(input) || utf8.RuneCountInString(input) > 8000 {
 		return "", errors.New("invalid companion request")
 	}
@@ -230,6 +235,9 @@ func (s *Store) AnswerWithHistory(ctx context.Context, client Completer, key, in
 	}
 	messages = append(messages, history...)
 	messages = append(messages, llm.Message{Role: "user", Content: input})
+	if markupInstructions != "" {
+		messages = append(messages, llm.Message{Role: "developer", Content: markupInstructions + ` Разметку помещай только внутри JSON-строки speech, экранируя кавычки атрибутов. При просьбе говорить разными голосами реально переключай их тегами speaker в speech: например, ведьма voice="jane", робот voice="ermil"; не заменяй озвучку словами «сказала мягким голосом». При просьбе «как на вокзале» используй effect="train_announce", затем сброс effect="-". Не меняй назначенные персонажам голоса: кто произносит реплику, тот и определяет voice и род; мужской робот говорит «я сам» голосом ermil, ведьма — «я сама» голосом jane. В summary запоминай назначение голосов обычными словами, без тегов. Шёпот робота — voice="ermil" is_whisper="true", ответ ведьмы — voice="jane" is_whisper="false". Возвращай голос рассказчика после реплик персонажей. Если попросили рассказать от себя, пересказывай косвенной речью: например, «робот решил сам показать секрет», не произноси его прямую речь женским голосом рассказчика и не меняй род самого персонажа. У speaker нет закрывающих тегов. summary, activity, anchor и preference оставляй обычным текстом.`})
+	}
 	// Subscription backends do not enforce JSON mode. Repeat the wire contract
 	// at the end without mixing the user input into privileged instructions.
 	messages = append(messages, llm.Message{Role: "developer", Content: "Для этого запроса верни только один объект JSON без Markdown: все обязательные поля speech, summary, activity, anchor (строки), new_round (boolean). Поле preference необязательно. Не пиши обычный текст вне JSON. Соблюдай остальные инструкции и неизменность anchor."})
@@ -250,7 +258,7 @@ func (s *Store) AnswerWithHistory(ctx context.Context, client Completer, key, in
 		// A subscription backend may ignore JSON mode or rewrite an anchor.
 		// Retry once, without exposing the rejected output or weakening checks.
 		retryCtx, cancel := context.WithTimeout(llm.WithoutHostedTools(ctx), 8*time.Second)
-		retryMessages := append(append([]llm.Message(nil), messages...), llm.Message{Role: "developer", Content: "Исправь формат: только допустимые обязательные поля JSON, без дополнительных полей. Если продолжается прежний раунд или собеседник отгадал ответ, скопируй предыдущий anchor дословно, даже если он пустой, и установи new_round=false; новую загадку или раунд начинай только по отдельной просьбе собеседника."})
+		retryMessages := append(append([]llm.Message(nil), messages...), llm.Message{Role: "developer", Content: "Исправь формат: только допустимые обязательные поля JSON, без дополнительных полей. speech, summary, activity и anchor — строки, никогда не объекты и не null; пустой anchor — пустая строка. Если продолжается прежний раунд или собеседник отгадал ответ, скопируй предыдущий anchor дословно, даже если он пустой, и установи new_round=false; новую загадку или раунд начинай только по отдельной просьбе собеседника."})
 		retryRaw, retryErr := client.Complete(retryCtx, retryMessages, true)
 		retryValid := retryErr == nil && retryCtx.Err() == nil
 		cancel()
@@ -297,14 +305,18 @@ func (s *Store) AnswerWithHistory(ctx context.Context, client Completer, key, in
 		}
 	}
 	entry.memory = memory{result.Summary, result.Activity, result.Anchor}
-	entry.messages = append(history, llm.Message{Role: "user", Content: input}, llm.Message{Role: "assistant", Content: result.Speech})
+	plainSpeech := tts.Plain(result.Speech)
+	entry.messages = append(history, llm.Message{Role: "user", Content: input}, llm.Message{Role: "assistant", Content: plainSpeech})
 	// Summary is refreshed every successful turn, before old verbatim turns leave.
 	for len(entry.messages) > 16 || messageChars(entry.messages) > 18000 {
 		entry.messages = entry.messages[2:]
 	}
 	entry.messages = append([]llm.Message(nil), entry.messages...)
-	entry.last, entry.at = result.Speech, s.now()
-	return result.Speech, nil
+	entry.last, entry.at = plainSpeech, s.now()
+	if markupInstructions != "" {
+		return result.Speech, nil
+	}
+	return plainSpeech, nil
 }
 
 func messageChars(messages []llm.Message) int {

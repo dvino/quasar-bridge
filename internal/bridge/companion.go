@@ -103,7 +103,7 @@ func (e *Engine) companionAnswer(ctx context.Context, text string) (Resolution, 
 	}
 	if isRetryCommand(text) || companionText(text) == "повтори" || companionText(text) == "повтори ответ" {
 		if answer, ok := e.Companion.Repeat(key); ok {
-			result.Answer = answer
+			e.setSpokenAnswer(ctx, &result, answer)
 		} else {
 			result.Answer = "Пока нечего повторить. О чём поговорим?"
 		}
@@ -122,7 +122,7 @@ func (e *Engine) companionAnswer(ctx context.Context, text string) (Resolution, 
 	if game.seed {
 		e.Companion.Reset(key)
 	}
-	answer, err := e.Companion.AnswerWithHistory(ctx, e.LLM, key, e.stripModelPrefix(text), source, e.AdultProfile, game.history.Messages)
-	result.Answer = answer
+	answer, err := e.Companion.AnswerWithMarkup(ctx, e.LLM, key, e.stripModelPrefix(text), source, e.AdultProfile, game.history.Messages, e.ttsInstructions(ctx))
+	e.setSpokenAnswer(ctx, &result, answer)
 	return result, err
 }

@@ -33,6 +33,8 @@ func TestConversationTextAndDeliveredResponse(t *testing.T) {
 	log.route("private-device-id", "llm")
 	answer := &server.TServerMessage{Message: &server.TServerMessage_Event{Event: &server.TServerMessage_TEvent{Header: &header.TEventHeader{RefMessageId: "private-device-id"}, Event: &server.TServerMessage_TEvent_AliceResponse{AliceResponse: &response.TAliceResponseProto{VoiceResponse: &response.TAliceResponseProto_TVoiceResponse{OutputSpeech: &response.TAliceResponseProto_TVoiceResponse_TOutputSpeech{Text: new("добрый день")}}}}}}}
 	log.server(aa(answer), true)
+	const marked = `<speaker voice="zahar" emotion="good">Добрый день!`
+	log.tts("private-device-id", marked)
 	log.client([]byte("secret-raw-audio"))
 	log.server([]byte(`{"token":"secret-auth"}`), true)
 	data, err := os.ReadFile(c.Path)
@@ -43,7 +45,7 @@ func TestConversationTextAndDeliveredResponse(t *testing.T) {
 		t.Fatal("private payload leaked")
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 3 {
+	if len(lines) != 4 {
 		t.Fatalf("events=%d", len(lines))
 	}
 	var e journal.Event
@@ -52,6 +54,13 @@ func TestConversationTextAndDeliveredResponse(t *testing.T) {
 	}
 	if e.Route != "llm" || !e.Delivered || e.Speech != "добрый день" || e.Request == "" {
 		t.Fatalf("bad response: %+v", e)
+	}
+	var speech journal.Event
+	if err := json.Unmarshal([]byte(lines[3]), &speech); err != nil {
+		t.Fatal(err)
+	}
+	if speech.Event != "tts_request" || speech.Speech != marked || speech.Request != e.Request || speech.Route != "llm" || speech.Delivered {
+		t.Fatalf("bad TTS event: %+v", speech)
 	}
 }
 

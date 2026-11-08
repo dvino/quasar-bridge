@@ -1,37 +1,42 @@
 package bridge
 
 import (
-	"regexp"
+	"context"
 	"strings"
+
+	"quasarbridge/internal/tts"
 )
 
-const ttsMarkupPrompt = `
-Финальный ответ озвучивает синтезатор Алисы. Для нужного произношения можно поставить + перед ударной гласной (зам+ок), сделать паузу через sil <[500]> (миллисекунды) или указать фонемы после слова в <[...]>.
-По явной просьбе меняй озвучку тегами <speaker is_whisper="true"> (шёпот), <speaker is_whisper="false"> (обычная речь), <speaker voice="zahar"> (голос по известному ID) или <speaker audio="alice-sounds-game-win-1.opus"> (звук по известному ID из библиотеки Алисы).
-Если доступен search_tts_catalog, ищи нужный голос или звук по короткому названию и подставляй найденный id. Используй точный ID из каталога, запроса или примера.
-Для темпа используй <speaker speed="1.2"> (1 — обычный темп), для языка — <speaker lang="en-US">.
-Тег <speaker effect="megaphone"> добавляет эффект к штатному голосу. Голос и эффект можно задать в одном теге, например <speaker voice="zahar" effect="megaphone">.
-Доступные эффекты — behind_the_wall, hamster, megaphone, pitch_down, psychodelic, pulse, train_announce. Сними эффект через <speaker effect="-">. У тегов <speaker> нет закрывающего тега. Пиши разметку прямо в тексте для синтеза, не описывай её словами.
-`
+func (e *Engine) ownerVoice(ctx context.Context) bool {
+	age, ok := ctx.Value(voiceAgeKey{}).(ageContext)
+	return e.TTSMarkup && ok && age.mode == ageAdult && age.adultMale
+}
 
-var ttsMarkup = regexp.MustCompile(
-	`</?speaker(?:\s+[^<>]*)?/?>|` +
-		`\bsil\s*<\[\s*[0-9]+\s*\]>|\s*<\[\s*[a-z]+(?:\s+[a-z]+)*\s*\]>|\+([АЕЁИОУЫЭЮЯаеёиоуыэюя])`)
-
-func (e *Engine) ttsInstructions() string {
-	if e.TTSMarkup {
-		return ttsMarkupPrompt
+func (e *Engine) ttsInstructions(ctx context.Context) string {
+	if !e.TTSMarkup {
+		return " Говоря о себе, используй женский род."
 	}
-	return ""
+	instructions := tts.Instructions
+	if e.ownerVoice(ctx) {
+		return instructions + ` Для этого взрослого собеседника твой постоянный голос — zahar, мужской. Начинай speech или текст ответа с <speaker voice="zahar"> и говори о себе в мужском роде («понял», «готов»), кроме явно запрошенного другого голоса или реплики персонажа. После реплик персонажей возвращайся к zahar.`
+	}
+	return instructions + " По умолчанию говори о себе в женском роде; при смене голоса согласуй род с голосом."
+}
+
+func (e *Engine) setSpokenAnswer(ctx context.Context, r *Resolution, text string) {
+	if e.ownerVoice(ctx) && text != "" && !strings.Contains(text, "voice=") {
+		text = `<speaker voice="zahar">` + text
+	}
+	r.setModelAnswer(text, e.TTSMarkup)
 }
 
 func (r *Resolution) setModelAnswer(text string, useMarkup bool) {
-	plain := ttsMarkup.ReplaceAllString(text, "$1")
-	r.Answer = plain
-	if plain != text {
-		r.Answer = strings.Join(strings.Fields(plain), " ")
-		if useMarkup {
-			r.speech = text
-		}
+	// Models often emit XML-style closers despite the prompt. Alice uses
+	// state-changing speaker tags, not XML scopes.
+	text = strings.NewReplacer("</speaker>", "", "<speak>", "", "</speak>", "").Replace(text)
+	r.Answer = tts.Plain(text)
+	r.speech = ""
+	if r.Answer != text && useMarkup {
+		r.speech = text
 	}
 }
