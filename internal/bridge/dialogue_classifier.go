@@ -120,6 +120,13 @@ func (e *Engine) semanticConversation(ctx context.Context, text string, child bo
 		}
 		state, history = e.Companion.ClassificationContext(key)
 	}
+	// Never interpret fiction in an active game as a local command.
+	if !(wasActive && entry.child) {
+		if d, ok := e.matchLocalCommand(ctx, text); ok {
+			d.keepDialogue = wasActive
+			return d, true
+		}
+	}
 	if d, ok := e.semanticDeviceCommand(ctx, text); ok {
 		d.keepDialogue = wasActive
 		return d, true

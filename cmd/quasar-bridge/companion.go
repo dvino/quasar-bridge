@@ -13,6 +13,12 @@ import (
 // configureCompanion owns the optional module's process configuration.
 // It does not create directories, migrate data or contact model providers.
 func configureCompanion(e *bridge.Engine, client *llm.Client) error {
+	if path := os.Getenv("QUASAR_LOCAL_COMMAND"); path != "" {
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("QUASAR_LOCAL_COMMAND must be an absolute path")
+		}
+		e.LocalCommand = bridge.ExecutableCommand{Path: path}
+	}
 	e.ExplicitConversations = os.Getenv("QUASAR_EXPLICIT_DIALOGUE") == "1"
 	if e.ExplicitConversations && os.Getenv("QUASAR_SEMANTIC_DIALOGUE") == "1" {
 		classifier := *client

@@ -50,6 +50,7 @@ type RouteDecision struct {
 	gameHistory    dialogue.Snapshot
 	seedGame       bool
 	privateGame    bool
+	localAction    string
 	Route          string `json:"route"`
 	Rule           string `json:"rule,omitempty"`
 	Source         string `json:"source"`

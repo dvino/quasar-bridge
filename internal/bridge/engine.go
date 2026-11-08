@@ -44,6 +44,7 @@ type Engine struct {
 	Playback              PlaybackController
 	Music                 MusicStarter
 	Dialogue              *dialogue.Store
+	LocalCommand          LocalCommand
 	Companion             *companion.Store
 	SharedProfile         *companion.Profile
 	AdultProfile          *companion.Profile
@@ -126,6 +127,9 @@ func (e *Engine) ResolveDecision(ctx context.Context, text string, decision Rout
 			}
 		}
 		return Resolution{Route: "llm", Answer: "Хорошо, закончим."}, nil
+	}
+	if decision.Source == "local_command" && e.LocalCommand != nil {
+		return e.runLocalCommand(ctx, decision.localAction)
 	}
 	if decision.Source == "companion" || decision.Source == "companion_session" {
 		return e.companionAnswer(ctx, text)
@@ -422,6 +426,9 @@ func (e *Engine) Decide(ctx context.Context, text string) (decision RouteDecisio
 	}
 	if e.Companion != nil && e.Companion.Active(dialogue.FamilyKey(ctx)) {
 		return RouteDecision{Route: "llm", Source: "companion"}
+	}
+	if decision, ok := e.matchLocalCommand(ctx, text); ok {
+		return decision
 	}
 	if e.companionRequest(ctx, text) {
 		return RouteDecision{Route: "llm", Source: "companion"}
